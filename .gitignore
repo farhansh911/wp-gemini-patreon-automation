@@ -1,0 +1,39 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/backup-db/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+error_log
+debug.log
+
+# Sensitive data
+*-private.php
+*-secret.php
+credentials.txt
+
+# Node modules (if you add any build tools)
+node_modules/
+package-lock.json
+yarn.lock
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.cache/
