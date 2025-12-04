@@ -4,7 +4,8 @@
  * Processes natural language commands to update episode access
  */
 
-if (!defined('ABSPATH')) exit;
+if (!defined('ABSPATH'))
+    exit;
 
 add_action('admin_menu', function () {
     add_submenu_page(
@@ -15,7 +16,7 @@ add_action('admin_menu', function () {
         'gemini-prompt',
         'gemini_prompt_page_html'
     );
-    
+
     add_submenu_page(
         'gemini-patreon-control',
         'Sync Episode Numbers',
@@ -24,7 +25,7 @@ add_action('admin_menu', function () {
         'gemini-sync-episodes',
         'gemini_sync_episodes_page_html'
     );
-    
+
     add_submenu_page(
         'gemini-patreon-control',
         'Auto Unlock Schedule',
@@ -33,9 +34,28 @@ add_action('admin_menu', function () {
         'gemini-auto-unlock',
         'gemini_auto_unlock_page_html'
     );
+
+    add_submenu_page(
+        'gemini-patreon-control',
+        'Cron Status',
+        'Cron Status',
+        'manage_options',
+        'gemini-cron-status',
+        'gemini_cron_status_page_html'
+    );
 });
 
-function gemini_prompt_page_html() {
+// Add custom 5-minute cron interval
+add_filter('cron_schedules', function ($schedules) {
+    $schedules['five_minutes'] = [
+        'interval' => 300, // 300 seconds = 5 minutes
+        'display' => __('Every 5 Minutes')
+    ];
+    return $schedules;
+});
+
+function gemini_prompt_page_html()
+{
     if (!current_user_can('manage_options')) {
         return;
     }
@@ -48,13 +68,14 @@ function gemini_prompt_page_html() {
             <li>"Change episode 12 to advance access only"</li>
             <li>"Unlock episode 8"</li>
         </ul>
-        
+
         <form method="post">
             <?php wp_nonce_field('gemini_command_nonce'); ?>
-            <textarea name="gemini_prompt" rows="4" cols="80" placeholder="Enter your command..." required></textarea><br><br>
+            <textarea name="gemini_prompt" rows="4" cols="80" placeholder="Enter your command..."
+                required></textarea><br><br>
             <input type="submit" name="gemini_send" class="button button-primary" value="🚀 Execute Command">
         </form>
-        
+
         <?php
         if (isset($_POST['gemini_send']) && check_admin_referer('gemini_command_nonce')) {
             process_gemini_command();
@@ -64,30 +85,31 @@ function gemini_prompt_page_html() {
     <?php
 }
 
-function process_gemini_command() {
+function process_gemini_command()
+{
     $prompt = sanitize_textarea_field($_POST['gemini_prompt']);
-    
+
     $api_key = get_option('gpc_gemini_key');
     if (!$api_key) {
         echo '<div class="notice notice-error"><p>❌ Please set your Gemini API key in Settings first.</p></div>';
         return;
     }
-    
+
     echo '<div style="background:#f0f0f1;padding:15px;margin:20px 0;border-left:4px solid #2271b1;">';
     echo '<h2>🔄 Processing Command...</h2>';
     echo '<p><strong>Your request:</strong> ' . esc_html($prompt) . '</p>';
-    
+
     $structured_data = ask_gemini_for_structure($prompt, $api_key);
-    
+
     if (!$structured_data) {
         echo '<p style="color:red;">❌ Failed to get response from Gemini.</p></div>';
         return;
     }
-    
+
     $result = execute_episode_action($structured_data);
-    
+
     echo '</div>';
-    
+
     if ($result['success']) {
         echo '<div class="notice notice-success"><p>✅ ' . esc_html($result['message']) . '</p></div>';
     } else {
@@ -95,7 +117,8 @@ function process_gemini_command() {
     }
 }
 
-function ask_gemini_for_structure($user_prompt, $api_key) {
+function ask_gemini_for_structure($user_prompt, $api_key)
+{
     $system_instruction = "You are an assistant that extracts structured data from user commands about podcast episodes.
 
 The user will give commands like:
@@ -119,10 +142,10 @@ Rules:
 - Respond ONLY with the JSON object, no other text";
 
     $full_prompt = $system_instruction . "\n\nUser command: " . $user_prompt;
-    
+
     $model = 'gemini-2.5-flash';
     $endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$api_key";
-    
+
     $body = json_encode([
         "contents" => [
             [
@@ -137,31 +160,31 @@ Rules:
             "topK" => 40
         ]
     ]);
-    
+
     $response = wp_remote_post($endpoint, [
         'headers' => ['Content-Type' => 'application/json'],
-        'body'    => $body,
+        'body' => $body,
         'timeout' => 30,
     ]);
-    
+
     if (is_wp_error($response)) {
         echo '<p style="color:red;">API Error: ' . esc_html($response->get_error_message()) . '</p>';
         return false;
     }
-    
+
     $response_body = wp_remote_retrieve_body($response);
     $data = json_decode($response_body, true);
-    
+
     if (!isset($data['candidates'][0]['content']['parts'][0]['text'])) {
         echo '<p style="color:red;">Unexpected API response format.</p>';
         echo '<pre>' . esc_html($response_body) . '</pre>';
         return false;
     }
-    
+
     $gemini_text = $data['candidates'][0]['content']['parts'][0]['text'];
     echo '<p><strong>🤖 Gemini interpretation:</strong></p>';
     echo '<pre style="background:#fff;padding:10px;border:1px solid #ccc;">' . esc_html($gemini_text) . '</pre>';
-    
+
     preg_match('/\{[^}]+\}/', $gemini_text, $matches);
     if (!empty($matches[0])) {
         $structured = json_decode($matches[0], true);
@@ -169,35 +192,36 @@ Rules:
             return $structured;
         }
     }
-    
+
     $structured = json_decode($gemini_text, true);
     return $structured ?: false;
 }
 
-function execute_episode_action($data) {
+function execute_episode_action($data)
+{
     if (!isset($data['episode_number']) || !isset($data['access_type'])) {
         return [
             'success' => false,
             'message' => 'Invalid data structure from Gemini. Missing episode_number or access_type.'
         ];
     }
-    
+
     $episode_number = intval($data['episode_number']);
     $access_type = sanitize_text_field($data['access_type']);
-    
+
     if (!in_array($access_type, ['free', 'advance'])) {
         return [
             'success' => false,
             'message' => 'Invalid access type. Must be "free" or "advance".'
         ];
     }
-    
+
     $episode_meta_key = get_option('gpc_episode_number_meta', 'episode_number');
     $patreon_post_meta_key = get_option('gpc_patreon_post_meta', 'patreon_post_id');
     $acf_field_type = get_option('gpc_acf_field_type', 'section');
-    
+
     echo '<p><strong>🔍 Searching for:</strong> Episode number ' . $episode_number . ' using meta key "' . esc_html($episode_meta_key) . '"</p>';
-    
+
     $args = [
         'post_type' => 'episodes',
         'meta_query' => [
@@ -209,17 +233,17 @@ function execute_episode_action($data) {
         ],
         'posts_per_page' => 1
     ];
-    
+
     $query = new WP_Query($args);
-    
+
     echo '<p><strong>📊 Search results:</strong> Found ' . $query->found_posts . ' episode(s)</p>';
-    
+
     $title_search = new WP_Query([
         'post_type' => 'episodes',
         's' => $episode_number,
         'posts_per_page' => 5
     ]);
-    
+
     if ($title_search->have_posts()) {
         echo '<p><strong>🔍 Episodes with "' . $episode_number . '" in title/content:</strong></p><ul>';
         while ($title_search->have_posts()) {
@@ -230,42 +254,44 @@ function execute_episode_action($data) {
         echo '</ul>';
         wp_reset_postdata();
     }
-    
+
     if (!$query->have_posts()) {
         return [
             'success' => false,
             'message' => "Episode $episode_number not found in WordPress. Make sure the 'Episode Number' field is set to $episode_number in the episode's sidebar."
         ];
     }
-    
+
     $post = $query->posts[0];
     $post_id = $post->ID;
-    
+
     echo '<p><strong>📝 Found WordPress post:</strong> ' . esc_html($post->post_title) . ' (ID: ' . $post_id . ')</p>';
-    
+
     $current_terms = wp_get_post_terms($post_id, 'chapter-categories', ['fields' => 'all']);
     $current_access = 'unknown';
-    
+
     if (!empty($current_terms) && !is_wp_error($current_terms)) {
         echo '<p><strong>🏷️ Current terms:</strong> ';
         foreach ($current_terms as $term) {
             echo esc_html($term->name) . ' (ID: ' . $term->term_id . '), ';
-            if (strtolower($term->name) === 'advance') $current_access = 'advance';
-            if (strtolower($term->name) === 'free') $current_access = 'free';
+            if (strtolower($term->name) === 'advance')
+                $current_access = 'advance';
+            if (strtolower($term->name) === 'free')
+                $current_access = 'free';
         }
         echo '</p>';
     } else {
         echo '<p><strong>🏷️ Current terms:</strong> None</p>';
     }
-    
+
     echo '<p><strong>📊 Current access:</strong> ' . esc_html($current_access) . '</p>';
-    
+
     if ($access_type === 'advance') {
         $term = get_term_by('name', 'Advance', 'chapter-categories');
         if (!$term) {
             $term = get_term_by('slug', 'advance', 'chapter-categories');
         }
-        
+
         if (!$term) {
             echo '<p style="color:orange;">⚠️ "Advance" term not found. Creating it...</p>';
             $new_term = wp_insert_term('Advance', 'chapter-categories');
@@ -278,16 +304,16 @@ function execute_episode_action($data) {
         } else {
             $term_id = $term->term_id;
         }
-        
+
         wp_set_object_terms($post_id, [$term_id], 'chapter-categories', false);
         echo '<p>✅ Set to "Advance" category (patron-only access)</p>';
-        
+
     } else {
         $term = get_term_by('name', 'Free', 'chapter-categories');
         if (!$term) {
             $term = get_term_by('slug', 'free', 'chapter-categories');
         }
-        
+
         if (!$term) {
             echo '<p style="color:orange;">⚠️ "Free" term not found. Creating it...</p>';
             $new_term = wp_insert_term('Free', 'chapter-categories');
@@ -300,29 +326,29 @@ function execute_episode_action($data) {
         } else {
             $term_id = $term->term_id;
         }
-        
+
         wp_set_object_terms($post_id, [$term_id], 'chapter-categories', false);
         echo '<p>✅ Removed "Advance" and set to "Free" category (public access)</p>';
     }
-    
+
     $verify_terms = wp_get_post_terms($post_id, 'chapter-categories', ['fields' => 'names']);
     if (!empty($verify_terms) && !is_wp_error($verify_terms)) {
         echo '<p>✅ Verified: Episode now has category: <strong>' . implode(', ', $verify_terms) . '</strong></p>';
     }
-    
+
     update_patreon_plugin_access($post_id, $access_type);
-    
+
     if (function_exists('update_field')) {
         update_field($acf_field_type, $access_type, $post_id);
         echo '<p>✅ Updated ACF field "' . esc_html($acf_field_type) . '" to "' . esc_html($access_type) . '" (if exists)</p>';
     }
-    
+
     $patreon_post_id = get_post_meta($post_id, $patreon_post_meta_key, true);
-    
+
     if ($patreon_post_id) {
         echo '<p><strong>🔗 Found Patreon post ID:</strong> ' . esc_html($patreon_post_id) . '</p>';
         $patreon_result = update_patreon_post_access($patreon_post_id, $access_type);
-        
+
         if ($patreon_result['success']) {
             echo '<p>✅ ' . esc_html($patreon_result['message']) . '</p>';
         } else {
@@ -331,16 +357,17 @@ function execute_episode_action($data) {
     } else {
         echo '<p style="color:orange;">⚠️ No Patreon post ID found for this episode.</p>';
     }
-    
+
     return [
         'success' => true,
         'message' => "Episode $episode_number successfully updated to '$access_type' access!"
     ];
 }
 
-function update_patreon_plugin_access($post_id, $access_type) {
+function update_patreon_plugin_access($post_id, $access_type)
+{
     echo '<h3>🔐 Updating Patreon WordPress Plugin Settings</h3>';
-    
+
     if ($access_type === 'free') {
         delete_post_meta($post_id, '_ppwp_patreon_level');
         delete_post_meta($post_id, 'patreon-level');
@@ -348,7 +375,7 @@ function update_patreon_plugin_access($post_id, $access_type) {
         echo '<p>✅ Removed Patreon tier restriction (available to everyone)</p>';
     } else {
         $silver_tier_id = get_option('gpc_patreon_silver_tier_id', '');
-        
+
         if (empty($silver_tier_id)) {
             echo '<p style="color:orange;">⚠️ Silver tier ID not configured. Please add it in Settings.</p>';
             echo '<p>To find your tier ID: Go to Patreon.com → Your Page → Settings → Tiers, and note the tier ID from the URL.</p>';
@@ -358,7 +385,7 @@ function update_patreon_plugin_access($post_id, $access_type) {
             echo '<p>✅ Set Patreon tier requirement to Silver tier (ID: ' . esc_html($silver_tier_id) . ')</p>';
         }
     }
-    
+
     $current_level = get_post_meta($post_id, 'patreon-level', true);
     if ($current_level === '0' || empty($current_level)) {
         echo '<p>✅ Verified: Patreon level = <strong>Everyone (Free)</strong></p>';
@@ -367,18 +394,19 @@ function update_patreon_plugin_access($post_id, $access_type) {
     }
 }
 
-function update_patreon_post_access($patreon_post_id, $access_type) {
+function update_patreon_post_access($patreon_post_id, $access_type)
+{
     $access_token = get_option('gpc_patreon_access_token');
-    
+
     if (!$access_token) {
         return [
             'success' => false,
             'message' => 'Patreon access token not configured.'
         ];
     }
-    
+
     $endpoint = "https://www.patreon.com/api/oauth2/v2/posts/$patreon_post_id";
-    
+
     $tier_data = [];
     if ($access_type === 'free') {
         $tier_data = [
@@ -401,7 +429,7 @@ function update_patreon_post_access($patreon_post_id, $access_type) {
             ]
         ];
     }
-    
+
     $response = wp_remote_request($endpoint, [
         'method' => 'PATCH',
         'headers' => [
@@ -411,17 +439,17 @@ function update_patreon_post_access($patreon_post_id, $access_type) {
         'body' => json_encode($tier_data),
         'timeout' => 30
     ]);
-    
+
     if (is_wp_error($response)) {
         return [
             'success' => false,
             'message' => 'Patreon API error: ' . $response->get_error_message()
         ];
     }
-    
+
     $status_code = wp_remote_retrieve_response_code($response);
     $response_body = wp_remote_retrieve_body($response);
-    
+
     if ($status_code === 200) {
         return [
             'success' => true,
@@ -438,20 +466,23 @@ function update_patreon_post_access($patreon_post_id, $access_type) {
 /**
  * Sync Episode Numbers Page
  */
-function gemini_sync_episodes_page_html() {
+function gemini_sync_episodes_page_html()
+{
     if (!current_user_can('manage_options')) {
         return;
     }
     ?>
     <div class="wrap">
         <h1>🔄 Sync Episode Numbers</h1>
-        <p>This tool will automatically extract episode numbers from your episode titles and fill in the <code>episode_number</code> field.</p>
-        
+        <p>This tool will automatically extract episode numbers from your episode titles and fill in the
+            <code>episode_number</code> field.
+        </p>
+
         <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:20px 0;">
             <strong>⚠️ Important:</strong> This will scan all episodes and extract numbers from titles like:<br>
             <code>"Surviving The Game As A Barbarian Episode 669"</code> → Will set episode_number to <strong>669</strong>
         </div>
-        
+
         <form method="post">
             <?php wp_nonce_field('sync_episodes_nonce'); ?>
             <p>
@@ -463,12 +494,12 @@ function gemini_sync_episodes_page_html() {
             <input type="submit" name="sync_episodes" class="button button-primary" value="🚀 Sync All Episodes">
             <input type="submit" name="preview_sync" class="button" value="👁️ Preview (Don't Save)">
         </form>
-        
+
         <?php
         if (isset($_POST['preview_sync']) && check_admin_referer('sync_episodes_nonce')) {
             preview_episode_sync();
         }
-        
+
         if (isset($_POST['sync_episodes']) && check_admin_referer('sync_episodes_nonce')) {
             perform_episode_sync(true);
         }
@@ -477,12 +508,14 @@ function gemini_sync_episodes_page_html() {
     <?php
 }
 
-function preview_episode_sync() {
+function preview_episode_sync()
+{
     echo '<h2>👁️ Preview - No Changes Made</h2>';
     perform_episode_sync(false);
 }
 
-function perform_episode_sync($save = false) {
+function perform_episode_sync($save = false)
+{
     $args = [
         'post_type' => 'episodes',
         'posts_per_page' => -1,
@@ -490,21 +523,21 @@ function perform_episode_sync($save = false) {
         'orderby' => 'date',
         'order' => 'DESC'
     ];
-    
+
     $query = new WP_Query($args);
-    
+
     if (!$query->have_posts()) {
         echo '<p style="color:red;">❌ No episodes found.</p>';
         return;
     }
-    
+
     echo '<div style="background:#f0f0f1;padding:15px;margin:20px 0;">';
     echo '<h3>📊 Found ' . $query->found_posts . ' episodes</h3>';
-    
+
     $updated = 0;
     $skipped = 0;
     $failed = 0;
-    
+
     echo '<table class="wp-list-table widefat fixed striped">';
     echo '<thead><tr>';
     echo '<th style="width:50px;">ID</th>';
@@ -513,18 +546,18 @@ function perform_episode_sync($save = false) {
     echo '<th style="width:100px;">Detected #</th>';
     echo '<th style="width:120px;">Status</th>';
     echo '</tr></thead><tbody>';
-    
+
     while ($query->have_posts()) {
         $query->the_post();
         $post_id = get_the_ID();
         $title = get_the_title();
         $current_episode_num = get_post_meta($post_id, 'episode_number', true);
-        
+
         $detected_number = extract_episode_number($title);
-        
+
         $status = '';
         $status_class = '';
-        
+
         if ($detected_number) {
             if ($current_episode_num == $detected_number) {
                 $status = '✓ Already set';
@@ -547,7 +580,7 @@ function perform_episode_sync($save = false) {
             $status_class = 'color:orange;';
             $failed++;
         }
-        
+
         echo '<tr>';
         echo '<td>' . $post_id . '</td>';
         echo '<td>' . esc_html($title) . '</td>';
@@ -556,12 +589,12 @@ function perform_episode_sync($save = false) {
         echo '<td style="' . $status_class . '">' . $status . '</td>';
         echo '</tr>';
     }
-    
+
     echo '</tbody></table>';
     echo '</div>';
-    
+
     wp_reset_postdata();
-    
+
     echo '<div style="background:#d1ecf1;border-left:4px solid #0c5460;padding:15px;margin:20px 0;">';
     echo '<h3>📈 Summary</h3>';
     echo '<ul>';
@@ -569,7 +602,7 @@ function perform_episode_sync($save = false) {
     echo '<li><strong>' . $skipped . '</strong> episodes already had correct numbers</li>';
     echo '<li><strong>' . $failed . '</strong> episodes couldn\'t detect number from title</li>';
     echo '</ul>';
-    
+
     if ($save) {
         echo '<p style="color:green;font-weight:bold;">✅ All episode numbers have been synced!</p>';
     } else {
@@ -578,7 +611,8 @@ function perform_episode_sync($save = false) {
     echo '</div>';
 }
 
-function extract_episode_number($title) {
+function extract_episode_number($title)
+{
     $patterns = [
         '/Episode\s+(\d+)/i',
         '/Ep\s+(\d+)/i',
@@ -586,27 +620,28 @@ function extract_episode_number($title) {
         '/\b(\d+)\s*$/',
         '/#\s*(\d+)/',
     ];
-    
+
     foreach ($patterns as $pattern) {
         if (preg_match($pattern, $title, $matches)) {
             return intval($matches[1]);
         }
     }
-    
+
     return null;
 }
 
 /**
  * Auto Unlock Schedule Page - Per Novel
  */
-function gemini_auto_unlock_page_html() {
+function gemini_auto_unlock_page_html()
+{
     if (!current_user_can('manage_options')) {
         return;
     }
-    
+
     if (isset($_POST['save_schedules']) && check_admin_referer('auto_unlock_nonce')) {
         $schedules = [];
-        
+
         if (isset($_POST['novel_id']) && is_array($_POST['novel_id'])) {
             foreach ($_POST['novel_id'] as $index => $novel_id) {
                 if (!empty($novel_id)) {
@@ -616,32 +651,27 @@ function gemini_auto_unlock_page_html() {
                         'search_term' => sanitize_text_field($_POST['search_term'][$index]),
                         'days' => intval($_POST['unlock_days'][$index]),
                         'time' => sanitize_text_field($_POST['unlock_time'][$index]),
+                        'skip_weekends' => isset($_POST['skip_weekends'][$index]) ? 1 : 0,
                         'enabled' => isset($_POST['enabled'][$index]) ? 1 : 0
                     ];
                 }
             }
         }
-        
+
         update_option('gpc_unlock_schedules', $schedules);
-        
+
         wp_clear_scheduled_hook('gpc_auto_unlock_novels');
         if (!empty($schedules)) {
-            $earliest_time = '23:59';
-            foreach ($schedules as $schedule) {
-                if ($schedule['enabled'] && $schedule['time'] < $earliest_time) {
-                    $earliest_time = $schedule['time'];
-                }
-            }
-            $timestamp = strtotime('today ' . $earliest_time);
-            if ($timestamp < time()) {
-                $timestamp = strtotime('tomorrow ' . $earliest_time);
-            }
-            wp_schedule_event($timestamp, 'daily', 'gpc_auto_unlock_novels');
+            // Schedule 5-minute check starting now
+            // This is more robust than daily because:
+            // 1. It handles multiple novels with different times
+            // 2. It avoids timezone calculation issues for the cron trigger
+            wp_schedule_event(time(), 'five_minutes', 'gpc_auto_unlock_novels');
         }
-        
+
         echo '<div class="updated"><p>✅ Unlock schedules saved!</p></div>';
     }
-    
+
     if (isset($_POST['reset_dates']) && check_admin_referer('auto_unlock_nonce')) {
         $schedules = get_option('gpc_unlock_schedules', []);
         foreach ($schedules as $schedule) {
@@ -649,39 +679,39 @@ function gemini_auto_unlock_page_html() {
         }
         echo '<div class="updated"><p>✅ All unlock dates have been reset!</p></div>';
     }
-    
+
     if (isset($_POST['test_unlock']) && check_admin_referer('auto_unlock_nonce')) {
         echo '<div style="background:#f0f0f1;padding:15px;margin:20px 0;border-left:4px solid #2271b1;">';
         echo '<h3>🧪 Testing Auto-Unlock (Preview Mode)</h3>';
         gpc_run_novel_unlock(true);
         echo '</div>';
     }
-    
+
     if (isset($_POST['run_now']) && check_admin_referer('auto_unlock_nonce')) {
         echo '<div style="background:#f0f0f1;padding:15px;margin:20px 0;border-left:4px solid #2271b1;">';
         echo '<h3>🚀 Running Auto-Unlock NOW</h3>';
         gpc_run_novel_unlock(false, true); // Pass true for force run
         echo '</div>';
     }
-    
+
     $schedules = get_option('gpc_unlock_schedules', []);
     $next_run = wp_next_scheduled('gpc_auto_unlock_novels');
-    
+
     $novels = get_posts([
         'post_type' => 'novels',
         'posts_per_page' => -1,
         'orderby' => 'title',
         'order' => 'ASC'
     ]);
-    
+
     ?>
     <div class="wrap">
         <h1>⏰ Auto Unlock Schedule (Per Novel)</h1>
         <p>Set up different unlock schedules for each novel. One advance episode will be unlocked per schedule.</p>
-        
+
         <form method="post">
             <?php wp_nonce_field('auto_unlock_nonce'); ?>
-            
+
             <table class="wp-list-table widefat fixed striped">
                 <thead>
                     <tr>
@@ -736,11 +766,11 @@ function gemini_auto_unlock_page_html() {
                     ?>
                 </tbody>
             </table>
-            
+
             <p style="margin-top:10px;">
                 <button type="button" class="button" id="add-schedule">➕ Add Novel Schedule</button>
             </p>
-            
+
             <p class="submit">
                 <input type="submit" name="save_schedules" class="button button-primary" value="💾 Save Schedules">
                 <input type="submit" name="reset_dates" class="button" value="🔄 Reset All Dates" style="margin-left:10px;">
@@ -748,20 +778,20 @@ function gemini_auto_unlock_page_html() {
                 <input type="submit" name="run_now" class="button" value="▶️ Run Now" style="margin-left:10px;">
             </p>
         </form>
-        
+
         <?php if ($next_run): ?>
             <div style="background:#d1ecf1;border-left:4px solid #0c5460;padding:15px;margin:20px 0;">
                 <h3>📊 Status</h3>
                 <p><strong>Next scheduled check:</strong> <?php echo date('Y-m-d H:i:s', $next_run); ?></p>
             </div>
         <?php endif; ?>
-        
+
         <div style="background:#f8f9fa;padding:15px;margin:20px 0;border:1px solid #ddd;">
             <h3>📖 How it works:</h3>
             <ol>
                 <li>Each novel can have its own unlock schedule (e.g., daily, every 2 days, weekly)</li>
-                <li>Every day at the specified time, the system checks if it's time to unlock for each novel</li>
-                <li>It will unlock <strong>ONE</strong> advance episode (the oldest one) per novel</li>
+                <li>The system checks <strong>every 5 minutes</strong> if any episodes are due to be unlocked</li>
+                <li>It will unlock <strong>ONE</strong> advance episode (the oldest one) per novel when due</li>
                 <li>The next unlock date is automatically calculated and tracked</li>
             </ol>
             <p><strong>Example:</strong></p>
@@ -771,100 +801,103 @@ function gemini_auto_unlock_page_html() {
             </ul>
         </div>
     </div>
-    
+
     <script>
-    jQuery(document).ready(function($) {
-        let rowIndex = <?php echo count($schedules); ?>;
-        const novels = <?php echo json_encode(array_map(function($n) { return ['id' => $n->ID, 'title' => $n->post_title]; }, $novels)); ?>;
-        
-        $('#add-schedule').click(function() {
-            let options = '<option value="">Select Novel...</option>';
-            novels.forEach(novel => {
-                options += '<option value="' + novel.id + '">' + novel.title + '</option>';
+        jQuery(document).ready(function ($) {
+            let rowIndex = <?php echo count($schedules); ?>;
+            const novels = <?php echo json_encode(array_map(function ($n) {
+                return ['id' => $n->ID, 'title' => $n->post_title];
+            }, $novels)); ?>;
+
+            $('#add-schedule').click(function () {
+                let options = '<option value="">Select Novel...</option>';
+                novels.forEach(novel => {
+                    options += '<option value="' + novel.id + '">' + novel.title + '</option>';
+                });
+
+                let row = '<tr>' +
+                    '<td><input type="checkbox" name="enabled[' + rowIndex + ']" value="1" checked></td>' +
+                    '<td><select name="novel_id[' + rowIndex + ']" required>' + options + '</select>' +
+                    '<input type="hidden" name="novel_name[' + rowIndex + ']" value=""></td>' +
+                    '<td><input type="text" name="search_term[' + rowIndex + ']" placeholder="e.g., Surviving Game Barbarian" style="width:100%;" /></td>' +
+                    '<td><input type="number" name="unlock_days[' + rowIndex + ']" min="1" max="365" value="1" style="width:60px;"> days</td>' +
+                    '<td><input type="time" name="unlock_time[' + rowIndex + ']" value="02:00" style="width:90px;"></td>' +
+                    '<td><label><input type="checkbox" name="skip_weekends[' + rowIndex + ']" value="1" checked> Skip Sat/Sun</label></td>' +
+                    '<td><em>Not scheduled yet</em></td>' +
+                    '<td><button type="button" class="button remove-row">Remove</button></td>' +
+                    '</tr>';
+
+                $('#schedule-rows').append(row);
+                rowIndex++;
             });
-            
-            let row = '<tr>' +
-                '<td><input type="checkbox" name="enabled[' + rowIndex + ']" value="1" checked></td>' +
-                '<td><select name="novel_id[' + rowIndex + ']" required>' + options + '</select>' +
-                '<input type="hidden" name="novel_name[' + rowIndex + ']" value=""></td>' +
-                '<td><input type="text" name="search_term[' + rowIndex + ']" placeholder="e.g., Surviving Game Barbarian" style="width:100%;" /></td>' +
-                '<td><input type="number" name="unlock_days[' + rowIndex + ']" min="1" max="365" value="1" style="width:60px;"> days</td>' +
-                '<td><input type="time" name="unlock_time[' + rowIndex + ']" value="02:00" style="width:90px;"></td>' +
-                '<td><label><input type="checkbox" name="skip_weekends[' + rowIndex + ']" value="1" checked> Skip Sat/Sun</label></td>' +
-                '<td><em>Not scheduled yet</em></td>' +
-                '<td><button type="button" class="button remove-row">Remove</button></td>' +
-                '</tr>';
-            
-            $('#schedule-rows').append(row);
-            rowIndex++;
+
+            $(document).on('click', '.remove-row', function () {
+                $(this).closest('tr').remove();
+            });
+
+            $(document).on('change', 'select[name^="novel_id"]', function () {
+                let selectedText = $(this).find('option:selected').text();
+                $(this).siblings('input[name^="novel_name"]').val(selectedText);
+            });
         });
-        
-        $(document).on('click', '.remove-row', function() {
-            $(this).closest('tr').remove();
-        });
-        
-        $(document).on('change', 'select[name^="novel_id"]', function() {
-            let selectedText = $(this).find('option:selected').text();
-            $(this).siblings('input[name^="novel_name"]').val(selectedText);
-        });
-    });
     </script>
     <?php
 }
 
-function gpc_run_novel_unlock($preview = false, $force_run = false) {
+function gpc_run_novel_unlock($preview = false, $force_run = false)
+{
     $schedules = get_option('gpc_unlock_schedules', []);
-    
+
     if (empty($schedules)) {
         echo '<p>⚠️ No unlock schedules configured.</p>';
         return;
     }
-    
+
     $current_time = current_time('mysql');
     $unlocked_count = 0;
-    
+
     if ($force_run) {
         echo '<p style="background:#fff3cd;padding:10px;border-left:4px solid #ffc107;"><strong>⚡ Force Mode:</strong> Ignoring schedule times and unlocking all due episodes now.</p>';
     }
-    
+
     echo '<table class="wp-list-table widefat fixed striped">';
     echo '<thead><tr><th>Novel</th><th>Schedule</th><th>Next Due</th><th>Episode to Unlock</th><th>Status</th></tr></thead><tbody>';
-    
+
     foreach ($schedules as $schedule) {
         if (!$schedule['enabled']) {
             continue;
         }
-        
+
         $novel_id = $schedule['novel_id'];
         $novel = get_post($novel_id);
-        
+
         if (!$novel) {
             continue;
         }
-        
+
         $next_unlock = get_post_meta($novel_id, 'gpc_next_unlock_date', true);
-        
+
         if (empty($next_unlock)) {
             // Get current timestamp
             $current_timestamp = current_time('timestamp');
-            
+
             // Parse scheduled time - handle both 12h and 24h formats
             $time_parts = explode(':', $schedule['time']);
-            $scheduled_hour = (int)$time_parts[0];
-            $scheduled_minute = isset($time_parts[1]) ? (int)$time_parts[1] : 0;
-            
+            $scheduled_hour = (int) $time_parts[0];
+            $scheduled_minute = isset($time_parts[1]) ? (int) $time_parts[1] : 0;
+
             // Create today's date at scheduled time
             $today_date = date('Y-m-d', $current_timestamp);
             $today_at_scheduled_time = $today_date . ' ' . sprintf('%02d:%02d:00', $scheduled_hour, $scheduled_minute);
             $today_timestamp = strtotime($today_at_scheduled_time);
-            
+
             // If scheduled time today has already passed, use tomorrow
             if ($today_timestamp <= $current_timestamp) {
                 $next_unlock = date('Y-m-d H:i:s', $today_timestamp + 86400); // Add 1 day (86400 seconds)
             } else {
                 $next_unlock = $today_at_scheduled_time;
             }
-            
+
             // If skip_weekends is enabled and next date falls on weekend, move to Monday
             if (!empty($schedule['skip_weekends'])) {
                 $day_of_week = date('w', strtotime($next_unlock));
@@ -874,31 +907,31 @@ function gpc_run_novel_unlock($preview = false, $force_run = false) {
                     $next_unlock = date('Y-m-d H:i:s', strtotime($next_unlock . ' +2 days'));
                 }
             }
-            
+
             if (!$preview) {
                 update_post_meta($novel_id, 'gpc_next_unlock_date', $next_unlock);
             }
         }
-        
+
         echo '<tr>';
         echo '<td><strong>' . esc_html($novel->post_title) . '</strong></td>';
         echo '<td>Every ' . $schedule['days'] . ' day(s) at ' . $schedule['time'] . '</td>';
         echo '<td>' . date('M j, Y H:i', strtotime($next_unlock)) . '</td>';
-        
+
         // Check if it's time to unlock OR force run is enabled
         if ($force_run || strtotime($next_unlock) <= strtotime($current_time)) {
             $episode = get_oldest_advance_episode_for_novel($novel_id);
-            
+
             if ($episode) {
                 echo '<td>' . esc_html($episode->post_title) . ' (ID: ' . $episode->ID . ')</td>';
-                
+
                 if (!$preview) {
                     unlock_episode($episode->ID);
-                    
+
                     // Calculate next unlock date, respecting weekend skipping
                     $new_next_unlock = calculate_next_unlock_date($next_unlock, $schedule['days'], $schedule['skip_weekends']);
                     update_post_meta($novel_id, 'gpc_next_unlock_date', $new_next_unlock);
-                    
+
                     echo '<td style="color:green;font-weight:bold;">✅ Unlocked! Next: ' . date('M j, Y H:i', strtotime($new_next_unlock)) . '</td>';
                     $unlocked_count++;
                 } else {
@@ -913,12 +946,12 @@ function gpc_run_novel_unlock($preview = false, $force_run = false) {
             echo '<td><em>Not due yet</em></td>';
             echo '<td>⏳ Next unlock in ' . human_time_diff(strtotime($current_time), strtotime($next_unlock)) . '</td>';
         }
-        
+
         echo '</tr>';
     }
-    
+
     echo '</tbody></table>';
-    
+
     if ($unlocked_count > 0) {
         echo '<div style="background:#d4edda;padding:10px;margin-top:15px;border-left:4px solid #28a745;">';
         if ($preview) {
@@ -930,28 +963,29 @@ function gpc_run_novel_unlock($preview = false, $force_run = false) {
     }
 }
 
-function get_oldest_advance_episode_for_novel($novel_id) {
+function get_oldest_advance_episode_for_novel($novel_id)
+{
     $novel = get_post($novel_id);
     if (!$novel) {
         return null;
     }
-    
+
     // Check if there's a custom search term for this novel
     $schedules = get_option('gpc_unlock_schedules', []);
     $search_term = '';
-    
+
     foreach ($schedules as $schedule) {
         if ($schedule['novel_id'] == $novel_id && !empty($schedule['search_term'])) {
             $search_term = $schedule['search_term'];
             break;
         }
     }
-    
+
     // If no custom search term, use novel title
     if (empty($search_term)) {
         $search_term = $novel->post_title;
     }
-    
+
     // Get all advance episodes
     $args = [
         'post_type' => 'episodes',
@@ -964,20 +998,20 @@ function get_oldest_advance_episode_for_novel($novel_id) {
             ]
         ]
     ];
-    
+
     $query = new WP_Query($args);
-    
+
     if (!$query->have_posts()) {
         return null;
     }
-    
+
     // Collect all matching episodes with their episode numbers
     $all_episodes = [];
     while ($query->have_posts()) {
         $query->the_post();
         $episode_title = get_the_title();
         $episode_num = get_post_meta(get_the_ID(), 'episode_number', true);
-        
+
         // Check if search term is in episode title
         if (stripos($episode_title, $search_term) !== false && !empty($episode_num)) {
             $all_episodes[] = [
@@ -988,21 +1022,22 @@ function get_oldest_advance_episode_for_novel($novel_id) {
         }
     }
     wp_reset_postdata();
-    
+
     if (empty($all_episodes)) {
         return null;
     }
-    
+
     // Sort by episode number (lowest first)
-    usort($all_episodes, function($a, $b) {
+    usort($all_episodes, function ($a, $b) {
         return $a['number'] - $b['number'];
     });
-    
+
     // Return the first one (lowest episode number)
     return get_post($all_episodes[0]['id']);
 }
 
-function unlock_episode($post_id) {
+function unlock_episode($post_id)
+{
     $free_term = get_term_by('name', 'Free', 'chapter-categories');
     if (!$free_term) {
         $new_term = wp_insert_term('Free', 'chapter-categories');
@@ -1010,15 +1045,15 @@ function unlock_episode($post_id) {
             $free_term = get_term($new_term['term_id']);
         }
     }
-    
+
     if ($free_term) {
         wp_set_object_terms($post_id, [$free_term->term_id], 'chapter-categories', false);
     }
-    
+
     delete_post_meta($post_id, '_ppwp_patreon_level');
     delete_post_meta($post_id, 'patreon-level');
     update_post_meta($post_id, 'patreon-level', '0');
-    
+
     if (function_exists('update_field')) {
         update_field('section', 'free', $post_id);
     }
@@ -1027,13 +1062,14 @@ function unlock_episode($post_id) {
 /**
  * Calculate next unlock date, optionally skipping weekends
  */
-function calculate_next_unlock_date($current_date, $days_interval, $skip_weekends) {
+function calculate_next_unlock_date($current_date, $days_interval, $skip_weekends)
+{
     $next_date = $current_date;
     $days_added = 0;
-    
+
     while ($days_added < $days_interval) {
         $next_date = date('Y-m-d H:i:s', strtotime($next_date . ' +1 day'));
-        
+
         if ($skip_weekends) {
             // 0 = Sunday, 6 = Saturday
             $day_of_week = date('w', strtotime($next_date));
@@ -1042,11 +1078,205 @@ function calculate_next_unlock_date($current_date, $days_interval, $skip_weekend
                 continue;
             }
         }
-        
+
         $days_added++;
     }
-    
+
     return $next_date;
+}
+
+/**
+ * Cron Status Diagnostic Page
+ */
+function gemini_cron_status_page_html()
+{
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+
+    // Handle manual cron trigger
+    if (isset($_POST['trigger_cron']) && check_admin_referer('cron_status_nonce')) {
+        echo '<div style="background:#f0f0f1;padding:15px;margin:20px 0;border-left:4px solid #2271b1;">';
+        echo '<h3>🚀 Manually Triggering Auto-Unlock</h3>';
+        gpc_run_novel_unlock(false, true);
+        echo '</div>';
+    }
+
+    $next_run = wp_next_scheduled('gpc_auto_unlock_novels');
+    $schedules = get_option('gpc_unlock_schedules', []);
+    $cron_disabled = defined('DISABLE_WP_CRON') && DISABLE_WP_CRON;
+
+    ?>
+    <div class="wrap">
+        <h1>⏱️ WordPress Cron Status</h1>
+
+        <!-- Cron Status Overview -->
+        <div style="background:#fff;padding:20px;margin:20px 0;border:1px solid #ddd;border-radius:4px;">
+            <h2>📊 Current Status</h2>
+
+            <?php if ($cron_disabled): ?>
+                <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:15px;margin:15px 0;">
+                    <strong>⚠️ WordPress Cron is Disabled</strong>
+                    <p>The constant <code>DISABLE_WP_CRON</code> is set to <code>true</code> in your wp-config.php. You need to
+                        set up a real system cron job.</p>
+                </div>
+            <?php endif; ?>
+
+            <table class="wp-list-table widefat fixed striped" style="margin-top:15px;">
+                <tbody>
+                    <tr>
+                        <th style="width:250px;">Auto-Unlock Cron Scheduled</th>
+                        <td>
+                            <?php if ($next_run): ?>
+                                <span style="color:green;font-weight:bold;">✅ Yes</span>
+                            <?php else: ?>
+                                <span style="color:red;font-weight:bold;">❌ No</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Next Scheduled Run</th>
+                        <td>
+                            <?php if ($next_run): ?>
+                                <strong><?php echo date('Y-m-d H:i:s', $next_run); ?></strong>
+                                (<?php echo human_time_diff($next_run, current_time('timestamp')); ?>
+                                <?php echo $next_run > current_time('timestamp') ? 'from now' : 'ago'; ?>)
+                            <?php else: ?>
+                                <em>Not scheduled</em>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Current Server Time</th>
+                        <td><?php echo current_time('Y-m-d H:i:s'); ?> (WordPress timezone)</td>
+                    </tr>
+                    <tr>
+                        <th>Active Schedules</th>
+                        <td><?php echo count(array_filter($schedules, function ($s) {
+                            return $s['enabled'];
+                        })); ?> enabled
+                            out of <?php echo count($schedules); ?> total</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Schedule Details -->
+        <?php if (!empty($schedules)): ?>
+            <div style="background:#fff;padding:20px;margin:20px 0;border:1px solid #ddd;border-radius:4px;">
+                <h2>📅 Schedule Details</h2>
+                <table class="wp-list-table widefat fixed striped">
+                    <thead>
+                        <tr>
+                            <th>Novel</th>
+                            <th>Interval</th>
+                            <th>Time</th>
+                            <th>Skip Weekends</th>
+                            <th>Next Unlock Due</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($schedules as $schedule): ?>
+                            <?php
+                            $novel = get_post($schedule['novel_id']);
+                            $next_unlock = get_post_meta($schedule['novel_id'], 'gpc_next_unlock_date', true);
+                            ?>
+                            <tr>
+                                <td><strong><?php echo $novel ? esc_html($novel->post_title) : 'Unknown'; ?></strong></td>
+                                <td>Every <?php echo $schedule['days']; ?> day(s)</td>
+                                <td><?php echo esc_html($schedule['time']); ?></td>
+                                <td><?php echo !empty($schedule['skip_weekends']) ? '✅ Yes' : '❌ No'; ?></td>
+                                <td>
+                                    <?php if ($next_unlock): ?>
+                                        <?php echo date('M j, Y H:i', strtotime($next_unlock)); ?>
+                                        <?php if (strtotime($next_unlock) <= current_time('timestamp')): ?>
+                                            <span style="color:green;font-weight:bold;">(DUE NOW)</span>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        <em>Not set</em>
+                                    <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php if ($schedule['enabled']): ?>
+                                        <span style="color:green;">● Enabled</span>
+                                    <?php else: ?>
+                                        <span style="color:gray;">○ Disabled</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+
+        <!-- Important Information -->
+        <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:20px;margin:20px 0;">
+            <h3>⚠️ Important: WordPress Cron Limitations</h3>
+            <p><strong>WordPress cron is NOT a real cron system.</strong> It only runs when someone visits your website.</p>
+
+            <h4>On Local Development Sites (like Local by Flywheel):</h4>
+            <ul>
+                <li>❌ Cron jobs will NOT run automatically because there's no traffic</li>
+                <li>✅ Use the <strong>"Run Now"</strong> button on the Auto Unlock page to manually trigger unlocks</li>
+                <li>✅ Or use the button below to trigger it from this page</li>
+            </ul>
+
+            <h4>On Production Sites:</h4>
+            <ul>
+                <li>✅ Cron will run when visitors access your site (if you have regular traffic)</li>
+                <li>⚡ For better reliability, set up a real system cron job to hit <code>wp-cron.php</code></li>
+                <li>📖 See: <a
+                        href="https://developer.wordpress.org/plugins/cron/hooking-wp-cron-into-the-system-task-scheduler/"
+                        target="_blank">WordPress Cron Documentation</a></li>
+            </ul>
+        </div>
+
+        <!-- Manual Trigger -->
+        <div style="background:#fff;padding:20px;margin:20px 0;border:1px solid #ddd;border-radius:4px;">
+            <h2>🎮 Manual Controls</h2>
+            <p>Use this button to manually trigger the auto-unlock process right now (ignores schedule times):</p>
+
+            <form method="post">
+                <?php wp_nonce_field('cron_status_nonce'); ?>
+                <p>
+                    <input type="submit" name="trigger_cron" class="button button-primary button-large"
+                        value="▶️ Run Auto-Unlock Now" style="padding:10px 30px;height:auto;">
+                </p>
+            </form>
+
+            <p><em>This will unlock all episodes that are currently due based on your schedules.</em></p>
+        </div>
+
+        <!-- Troubleshooting -->
+        <div style="background:#f8f9fa;padding:20px;margin:20px 0;border:1px solid #ddd;border-radius:4px;">
+            <h3>🔧 Troubleshooting</h3>
+
+            <h4>Episodes not unlocking automatically?</h4>
+            <ol>
+                <li><strong>Check if cron is scheduled:</strong> Look at "Auto-Unlock Cron Scheduled" above - should be
+                    "Yes"</li>
+                <li><strong>Verify schedules are saved:</strong> Go to <a
+                        href="<?php echo admin_url('admin.php?page=gemini-auto-unlock'); ?>">Auto Unlock</a> page and check
+                    your schedules</li>
+                <li><strong>Check next unlock dates:</strong> See "Schedule Details" table above - dates should be set</li>
+                <li><strong>For local sites:</strong> Use the "Run Now" button instead of waiting for automatic unlocks</li>
+                <li><strong>Check episode numbers:</strong> Episodes need the <code>episode_number</code> meta field filled.
+                    Use <a href="<?php echo admin_url('admin.php?page=gemini-sync-episodes'); ?>">Sync Episodes</a> tool.
+                </li>
+            </ol>
+
+            <h4>How to set up real cron (Production only):</h4>
+            <p>Add this to your server's crontab to run every hour:</p>
+            <pre
+                style="background:#fff;padding:10px;border:1px solid #ddd;">0 * * * * wget -q -O - <?php echo site_url('wp-cron.php?doing_wp_cron'); ?> &>/dev/null</pre>
+            <p>Or using curl:</p>
+            <pre
+                style="background:#fff;padding:10px;border:1px solid #ddd;">0 * * * * curl <?php echo site_url('wp-cron.php?doing_wp_cron'); ?> &>/dev/null</pre>
+        </div>
+    </div>
+    <?php
 }
 
 add_action('gpc_auto_unlock_novels', 'gpc_run_novel_unlock');
